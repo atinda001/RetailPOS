@@ -1,0 +1,405 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+enum StockMovementType {
+  SALE
+  RETURN
+  PURCHASE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  WASTE
+  OPENING_STOCK
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MPESA
+  VOUCHER
+  SPLIT
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum NotificationType {
+  LOW_STOCK
+  OUT_OF_STOCK
+  SHIFT_VARIANCE
+  SYNC_FAILED
+  PAYMENT_PENDING
+}
+
+enum VatModel {
+  INCLUSIVE
+  EXCLUSIVE
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+
+model Tenant {
+  id         String     @id @default(uuid())
+  name       String
+  slug       String     @unique
+  plan       Plan       @default(STARTER)
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  stores     Store[]
+  users      User[]
+  products   Product[]
+  categories Category[]
+  customers  Customer[]
+  suppliers  Supplier[]
+  taxRates   TaxRate[]
+}
+
+model Store {
+  id            String      @id @default(uuid())
+  tenantId      String
+  name          String
+  address       String?
+  phone         String?
+  currency      String      @default("KES")
+  timezone      String      @default("Africa/Nairobi")
+  receiptFooter String?
+  logoUrl       String?
+  kraPin        String?
+  vatRegNumber  String?
+  vatModel      VatModel    @default(INCLUSIVE)
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
+  terminals     Terminal[]
+  users         User[]
+  shifts        Shift[]
+  sales         Sale[]
+  stockItems    StockItem[]
+}
+
+model Terminal {
+  id         String    @id @default(uuid())
+  tenantId   String
+  storeId    String
+  name       String
+  isActive   Boolean   @default(true)
+  lastSeenAt DateTime?
+  store      Store     @relation(fields: [storeId], references: [id])
+  shifts     Shift[]
+  sales      Sale[]
+}
+
+model User {
+  id          String     @id @default(uuid())
+  tenantId    String
+  storeId     String?
+  email       String
+  password    String
+  pin         String?
+  firstName   String
+  lastName    String
+  role        Role       @default(CASHIER)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  store       Store?     @relation(fields: [storeId], references: [id])
+  shifts      Shift[]
+  sales       Sale[]     @relation("SaleCashier")
+  voidedSales Sale[]     @relation("SaleVoidedBy")
+  auditLogs   AuditLog[]
+
+  @@unique([tenantId, email])
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  color     String?
+  iconName  String?
+  sortOrder Int       @default(0)
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  products  Product[]
+
+  @@unique([tenantId, name])
+}
+
+model Product {
+  id                 String             @id @default(uuid())
+  tenantId           String
+  categoryId         String?
+  name               String
+  description        String?
+  sku                String?
+  barcode            String?
+  imageUrl           String?
+  priceAmount        Int
+  costAmount         Int                @default(0)
+  taxRateId          String?
+  isActive           Boolean            @default(true)
+  trackStock         Boolean            @default(true)
+  allowNegativeStock Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  tenant             Tenant             @relation(fields: [tenantId], references: [id])
+  category           Category?          @relation(fields: [categoryId], references: [id])
+  taxRate            TaxRate?           @relation(fields: [taxRateId], references: [id])
+  stockItems         StockItem[]
+  saleLineItems      SaleLineItem[]
+  purchaseLineItems  PurchaseLineItem[]
+
+  @@unique([tenantId, barcode])
+  @@unique([tenantId, sku])
+}
+
+model StockItem {
+  id              String          @id @default(uuid())
+  tenantId        String
+  storeId         String
+  productId       String
+  quantityOnHand  Int             @default(0)
+  reorderPoint    Int             @default(5)
+  reorderQuantity Int             @default(20)
+  updatedAt       DateTime        @updatedAt
+  store           Store           @relation(fields: [storeId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  stockMovements  StockMovement[]
+
+  @@unique([storeId, productId])
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  tenantId      String
+  stockItemId   String
+  type          StockMovementType
+  quantityDelta Int
+  reason        String?
+  referenceId   String?
+  createdAt     DateTime          @default(now())
+  createdBy     String?
+  stockItem     StockItem         @relation(fields: [stockItemId], references: [id])
+
+  @@index([stockItemId, createdAt])
+}
+
+model TaxRate {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  rate      Int
+  isDefault Boolean   @default(false)
+  isActive  Boolean   @default(true)
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  products  Product[]
+}
+
+model Shift {
+  id           String      @id @default(uuid())
+  tenantId     String
+  storeId      String
+  terminalId   String
+  cashierId    String
+  openedAt     DateTime    @default(now())
+  closedAt     DateTime?
+  openingFloat Int
+  closingFloat Int?
+  status       ShiftStatus @default(OPEN)
+  notes        String?
+  store        Store       @relation(fields: [storeId], references: [id])
+  terminal     Terminal    @relation(fields: [terminalId], references: [id])
+  cashier      User        @relation(fields: [cashierId], references: [id])
+  sales        Sale[]
+
+  @@index([tenantId, status, terminalId])
+  @@index([tenantId, cashierId, status])
+}
+
+model Sale {
+  id             String         @id @default(uuid())
+  tenantId       String
+  storeId        String
+  terminalId     String
+  shiftId        String
+  cashierId      String
+  customerId     String?
+  receiptNumber  String
+  status         SaleStatus     @default(COMPLETED)
+  subtotalAmount Int
+  discountAmount Int            @default(0)
+  taxAmount      Int            @default(0)
+  totalAmount    Int
+  amountTendered Int
+  changeAmount   Int            @default(0)
+  notes          String?
+  offlineId      String?
+  createdAt      DateTime       @default(now())
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?
+  store          Store          @relation(fields: [storeId], references: [id])
+  terminal       Terminal       @relation(fields: [terminalId], references: [id])
+  shift          Shift          @relation(fields: [shiftId], references: [id])
+  cashier        User           @relation("SaleCashier", fields: [cashierId], references: [id])
+  voidedBy       User?          @relation("SaleVoidedBy", fields: [voidedById], references: [id])
+  customer       Customer?      @relation(fields: [customerId], references: [id])
+  lineItems      SaleLineItem[]
+  payments       Payment[]
+
+  @@unique([tenantId, receiptNumber])
+  @@unique([tenantId, offlineId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, storeId, createdAt])
+  @@index([tenantId, cashierId])
+  @@index([offlineId])
+}
+
+model SaleLineItem {
+  id              String  @id @default(uuid())
+  saleId          String
+  productId       String
+  productName     String
+  productBarcode  String?
+  quantity        Int
+  unitPriceAmount Int
+  discountAmount  Int     @default(0)
+  taxAmount       Int     @default(0)
+  totalAmount     Int
+  sale            Sale    @relation(fields: [saleId], references: [id])
+  product         Product @relation(fields: [productId], references: [id])
+}
+
+model Payment {
+  id        String        @id @default(uuid())
+  saleId    String
+  method    PaymentMethod
+  amount    Int
+  reference String?
+  status    PaymentStatus @default(COMPLETED)
+  createdAt DateTime      @default(now())
+  sale      Sale          @relation(fields: [saleId], references: [id])
+}
+
+model Customer {
+  id            String   @id @default(uuid())
+  tenantId      String
+  firstName     String
+  lastName      String?
+  phone         String?
+  email         String?
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  sales         Sale[]
+
+  @@unique([tenantId, phone])
+}
+
+model Supplier {
+  id          String     @id @default(uuid())
+  tenantId    String
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  isActive    Boolean    @default(true)
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  purchases   Purchase[]
+}
+
+model Purchase {
+  id          String             @id @default(uuid())
+  tenantId    String
+  storeId     String
+  supplierId  String?
+  status      PurchaseStatus     @default(DRAFT)
+  totalAmount Int
+  notes       String?
+  createdAt   DateTime           @default(now())
+  receivedAt  DateTime?
+  supplier    Supplier?          @relation(fields: [supplierId], references: [id])
+  lineItems   PurchaseLineItem[]
+}
+
+model PurchaseLineItem {
+  id             String   @id @default(uuid())
+  purchaseId     String
+  productId      String
+  quantity       Int
+  unitCostAmount Int
+  totalAmount    Int
+  purchase       Purchase @relation(fields: [purchaseId], references: [id])
+  product        Product  @relation(fields: [productId], references: [id])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  tenantId  String
+  storeId   String?
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@index([tenantId, isRead, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String?
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([entityType, entityId])
+}
